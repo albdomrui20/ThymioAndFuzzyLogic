@@ -1,0 +1,57 @@
+<!DOCTYPE aesl-source>
+<network>
+
+
+<!--list of global events-->
+<constant value="1000" name="TIEMPO_GIRO"/>
+<constant value="1000" name="UMBRAL_OBSTACULO"/>
+<constant value="200" name="VELOCIDAD"/>
+<constant value="200" name="VELOCIDAD_GIRO"/>
+<constant value="200" name="VEOCIDAD"/>
+
+
+<!--node Tim en MSI - 12044-->
+<node name="Tim en MSI - 12044" nodeId="{e22c8746-0034-42f2-aaa1-3070b3cddc76}"><![CDATA[# Variables de estado
+var estado = 1          # 1=avanzar, 2=girando
+var distancia_frontal   # Valor del sensor frontal
+
+# Inicialización
+
+    estado = 1
+    motor.left.target = VELOCIDAD
+    motor.right.target = VELOCIDAD
+    call leds.top(32, 32, 32)  # Luz blanca: avanzando
+
+# Temporizador para controlar el giro
+onevent timer0
+    if estado == 2 then  # Si está en estado de giro
+        # Terminar el giro después de TIEMPO_GIRO milisegundos
+        estado = 1
+        motor.left.target = VELOCIDAD
+        motor.right.target = VELOCIDAD
+        call leds.top(32, 32, 32)  # Luz blanca: avanzando
+        timer.period[0] = 0  # Detener temporizador
+    end
+
+# Evento de proximidad principal
+onevent prox
+    distancia_frontal = prox.horizontal[2]  # Leer sensor frontal
+    
+    if estado == 1 then  # Solo actuar si está avanzando
+        if distancia_frontal < UMBRAL_OBSTACULO then
+            # Obstáculo detectado - detenerse y comenzar giro
+            estado = 2
+            motor.left.target = -VELOCIDAD_GIRO  # Girar en el lugar
+            motor.right.target = VELOCIDAD_GIRO
+            call leds.top(255, 0, 0)  # Luz roja: girando
+            timer.period[0] = TIEMPO_GIRO  # Iniciar temporizador
+        else
+            # Sin obstáculos - avanzar
+            motor.left.target = VELOCIDAD
+            motor.right.target = VELOCIDAD
+            call leds.top(32, 32, 32)  # Luz blanca: avanzando
+        end
+    end]]></node>
+
+
+</network>

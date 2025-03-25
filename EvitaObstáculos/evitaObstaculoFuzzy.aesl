@@ -1,0 +1,160 @@
+<!DOCTYPE aesl-source>
+<network>
+
+
+<!--list of global events-->
+<constant name="CLOSING_HIGH" value="4300"/>
+<constant name="CLOSING_LOW" value="3300"/>
+<constant name="FAR_HIGH" value="3600"/>
+<constant name="FAR_LOW" value="3000"/>
+<constant name="NEAR_HIGH" value="4300"/>
+<constant name="NEAR_LOW" value="4200"/>
+<constant name="VEL" value="200"/>
+<constant name="VEL_GIRO" value="150"/>
+
+
+<!--node Tom en MSI - 15612-->
+<node name="Tom en MSI - 15612" nodeId="{60e470e3-5234-49fa-b464-53697ebd2bc0}"><![CDATA[# Thymio-II: Movimiento automático con lógica difusa mejorado
+var state = 1      # 1=avanzar, 2=girando, 3=esperando_tras_giro
+var value          # Valor del sensor frontal
+var premises[3]    # Grados de pertenencia: lejos, cerrándose, cerca
+var consequents[5] # Grados de pertenencia para velocidades
+var temp           # Variable temporal
+
+var centers[5] = [4, 3, 2, 1, 0]  # Centros de salida para las velocidades
+var height
+var width = 200    # Ancho de la función triangular
+var area           # Área bajo la función
+var mid            # Medio de la función
+var accum_weighted # Área ponderada
+var accum_areas    # Área total
+var crisp          # Salida final
+var i              # Índice de bucle
+var turn_timer = 0 # Temporizador para el giro
+
+# Fuzzificación del sensor frontal
+sub fuzzify
+  value = prox.horizontal[2]
+
+  # "Lejos" (función saturada)
+  if value <= FAR_LOW then premises[0] = 100
+  elseif value >= FAR_HIGH then premises[0] = 0
+  else 
+    call math.muldiv(temp, (value - FAR_LOW), 100, (FAR_HIGH - FAR_LOW))
+    premises[0] = 100 - temp
+  end
+
+  # "Cerrándose" (función triangular)
+  mid = CLOSING_LOW + (CLOSING_HIGH - CLOSING_LOW)/2
+  if value < CLOSING_LOW then premises[1] = 0
+  elseif value > CLOSING_HIGH then premises[1] = 0
+  elseif value < mid then
+    call math.muldiv(temp, (value - CLOSING_LOW), 100, (mid - CLOSING_LOW))
+    premises[1] = temp
+  else
+    call math.muldiv(temp, (value - mid), 100, (CLOSING_HIGH - mid))
+    premises[1] = 100 - temp
+  end
+
+  # "Cerca" (función saturada)
+  if value >= NEAR_HIGH then premises[2] = 100
+  elseif value <= NEAR_LOW then premises[2] = 0
+  else
+    call math.muldiv(temp, (value - NEAR_LOW), 100, (NEAR_HIGH - NEAR_LOW))
+    premises[2] = temp
+  end
+
+# Aplicación de reglas difusas
+sub apply_rules
+  call math.fill(consequents, 0)
+
+  # Regla 1: Si lejos entonces muy rápido
+  if premises[0] != 0 then consequents[0] = premises[0] end
+  
+  # Regla 2: Si lejos y cerrándose entonces rápido
+  if premises[0] != 0 and premises[1] != 0 then 
+    call math.min(consequents[1], premises[0], premises[1]) 
+  end
+  
+  # Regla 3: Si cerrándose entonces velocidad crucero
+  if premises[1] != 0 then consequents[2] = premises[1] end
+  
+  # Regla 4: Si cerrándose y cerca entonces lento
+  if premises[1] != 0 and premises[2] != 0 then 
+    call math.min(consequents[3], premises[1], premises[2]) 
+  end
+  
+  # Regla 5: Si cerca entonces detenerse
+  if premises[2] != 0 then consequents[4] = premises[2] end
+
+# Cálculo del área bajo la función
+sub compute_area
+   call math.muldiv(area, width, height, 1)
+   call math.muldiv(temp, area, height, 200)
+   area -= temp
+   area /= 100
+
+# Desfuzzificación
+sub defuzzify
+  accum_weighted = 0
+  accum_areas = 0
+  for i in 0:4 do
+      height = consequents[i]
+      callsub compute_area
+      accum_weighted += centers[i] * area
+      accum_areas += area
+  end
+  if accum_areas == 0 then accum_areas = 1 end
+  call math.muldiv(crisp, accum_weighted, 100, accum_areas)
+
+# Inicia el giro de 180°
+sub start_turn
+  state = 2  # Estado de giro
+  turn_timer = 0
+  motor.left.target = -200  # Giro en el lugar
+  motor.right.target = 200
+  timer.period[0] = 150  # Temporizador más corto para mejor control
+
+# Maneja el temporizador para el giro
+onevent timer0
+  if state == 2 then  # Si está girando
+    turn_timer += 1
+    if turn_timer >= 10 then  # Después de ~1 segundo (10*100ms)
+      state = 3  # Cambia a estado de espera post-giro
+      motor.left.target = 0
+      motor.right.target = 0
+      timer.period[0] = 500  # Espera 500ms antes de avanzar
+    end
+  elseif state == 3 then  # Espera post-giro
+    state = 1  # Vuelve al estado normal
+    timer.period[0] = 0  # Detiene el temporizador
+  end
+
+# Evento principal de proximidad
+onevent prox
+  if state == 0 then return end  # Si está desactivado
+  
+  callsub fuzzify
+  callsub apply_rules
+  
+  # Solo desfuzzifica si no está girando o esperando
+  if state == 1 then
+    callsub defuzzify
+    
+    # Si está completamente cerca (detenido) y no está ya girando
+    if premises[2] == 100 and state != 2 and state != 3 then
+      callsub start_turn
+    else
+      motor.left.target = crisp
+      motor.right.target = crisp
+    end
+  end
+  
+  # Feedback visual con LEDs
+  call leds.circle(
+    premises[0]/3, premises[1]/3, premises[2]/3,
+    consequents[0]/3, consequents[1]/3, consequents[2]/3,
+    consequents[3]/3, consequents[4]/3)]]></node>
+
+
+</network>
